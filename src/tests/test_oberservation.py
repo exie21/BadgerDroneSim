@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import math
 import unittest
 
-from src.badger_core.oberservation import (
+from src.badger_core.observation import (
     Observation, ObservationDecision, ObservationStatus, validate_observation,
 )
 
