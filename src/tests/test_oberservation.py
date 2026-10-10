@@ -89,8 +89,8 @@ class TestObservationValidation(unittest.TestCase):
         self.assertEqual(result.status, ObservationStatus.INVALID_POSE)
 
     def test_future_precedes_out_of_order(self):
-        result = self.decide(self.observation(capture_time_s=101),
-                             last_capture_time_s=102)
+        result = self.decide(self.observation(capture_time_s=101.0),
+                             last_capture_time_s=102.0)
         self.assertEqual(result, ObservationDecision(ObservationStatus.FUTURE, None))
 
     def test_out_of_order_precedes_stale(self):
@@ -106,6 +106,50 @@ class TestObservationValidation(unittest.TestCase):
     def test_hypot_overflow_is_invalid_pose(self):
         result = self.decide(self.observation(x_error_m=1.7e308, y_error_m=1.7e308))
         self.assertEqual(result, ObservationDecision(ObservationStatus.INVALID_POSE, None))
+
+    def test_age_boundary_exactly_max_age_accepted(self):
+        """Test that an observation exactly max_age_s old is accepted (not STALE)."""
+        result = self.decide(self.observation(capture_time_s=99.75, x_error_m=0.20, y_error_m=0.0),
+                             last_capture_time_s=99.0,
+                             now_s=100.0, max_age_s=0.25)
+        self.assertEqual(result.status, ObservationStatus.VALID)
+
+    def test_age_boundary_older_than_max_age_is_stale(self):
+        """Test that an observation older than max_age_s is STALE."""
+        result = self.decide(self.observation(capture_time_s=99.5, x_error_m=0.20, y_error_m=0.0),
+                             last_capture_time_s=99.0,
+                             now_s=100.0, max_age_s=0.25)
+        self.assertEqual(result.status, ObservationStatus.STALE)
+
+    def test_centering_boundary_exactly_tolerance_is_centered(self):
+        """Test that an observation exactly centered_tolerance_m away is CENTERED."""
+        result = self.decide(self.observation(x_error_m=0.125, y_error_m=0.0),
+                             centered_tolerance_m=0.125)
+        self.assertEqual(result.status, ObservationStatus.CENTERED)
+
+    def test_centering_boundary_just_outside_is_valid(self):
+        """Test that an observation just outside centered_tolerance_m is VALID."""
+        result = self.decide(self.observation(x_error_m=0.126, y_error_m=0.0),
+                             centered_tolerance_m=0.125)
+        self.assertEqual(result.status, ObservationStatus.VALID)
+
+    def test_centering_boundary_just_inside_is_centered(self):
+        """Test that an observation just inside centered_tolerance_m is CENTERED."""
+        result = self.decide(self.observation(x_error_m=0.124, y_error_m=0.0),
+                             centered_tolerance_m=0.125)
+        self.assertEqual(result.status, ObservationStatus.CENTERED)
+
+    def test_timestamp_equal_to_last_capture_is_out_of_order(self):
+        """Test that capture time equal to last_capture_time_s is OUT_OF_ORDER."""
+        result = self.decide(self.observation(capture_time_s=100.0),
+                             last_capture_time_s=100.0)
+        self.assertEqual(result, ObservationDecision(ObservationStatus.OUT_OF_ORDER, None))
+
+    def test_timestamp_later_than_now_is_future(self):
+        """Test that capture time later than now_s is FUTURE."""
+        result = self.decide(self.observation(capture_time_s=100.1),
+                             last_capture_time_s=99.9)
+        self.assertEqual(result, ObservationDecision(ObservationStatus.FUTURE, None))
 
 
 if __name__ == "__main__":
