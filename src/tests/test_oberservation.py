@@ -50,12 +50,6 @@ class TestObservationValidation(unittest.TestCase):
         self.assertEqual(result.status, ObservationStatus.VALID)
         self.assertAlmostEqual(result.horizontal_error_m, 0.20)
 
-    def test_nonpositive_thresholds_raise(self):
-        for option in (dict(max_age_s=0), dict(max_age_s=-1),
-                       dict(centered_tolerance_m=0), dict(centered_tolerance_m=-1)):
-            with self.subTest(option=option), self.assertRaises(ValueError):
-                self.decide(self.observation(), **option)
-
     def test_wrong_target_precedes_other_rejections(self):
         for target in (None, "", 8):
             with self.subTest(target=target):
@@ -150,6 +144,32 @@ class TestObservationValidation(unittest.TestCase):
         result = self.decide(self.observation(capture_time_s=100.1),
                              last_capture_time_s=99.9)
         self.assertEqual(result, ObservationDecision(ObservationStatus.FUTURE, None))
+
+    def test_missing_target_id_is_wrong_target(self):
+        """Test that missing target_id returns WRONG_TARGET even if expected_target_id is also None."""
+        result = self.decide(SimpleNamespace(target_id=None, capture_time_s=100.0, received_time_s=100.05,
+                                             x_error_m=0.06, y_error_m=-0.04, valid_pose=True,
+                                             calibration_version="v1"), expected_target_id=None)
+        self.assertEqual(result.status, ObservationStatus.WRONG_TARGET)
+
+    def test_tag_id_zero_is_wrong_target(self):
+        """Test that target_id=0 is treated as WRONG_TARGET (not CENTERED)."""
+        result = self.decide(self.observation(target_id=0))
+        self.assertEqual(result.status, ObservationStatus.WRONG_TARGET)
+
+    def test_non_positive_max_age_s_raises_value_error(self):
+        """Test that non-positive max_age_s causes ValueError."""
+        for value in (0, -1):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    self.decide(self.observation(), max_age_s=value)
+
+    def test_non_positive_centered_tolerance_m_raises_value_error(self):
+        """Test that non-positive centered_tolerance_m causes ValueError."""
+        for value in (0, -1):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    self.decide(self.observation(), centered_tolerance_m=value)
 
 
 if __name__ == "__main__":
