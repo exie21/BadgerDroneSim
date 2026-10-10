@@ -1,2 +1,4 @@
-# Local agent working notes; intentionally not part of the product source.
+# Local agent working notes and local-runner state; never part of product source.
 AGENT_HANDOFF_SCOPE.txt
+.agent-queue/
+.aider*
