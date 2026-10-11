@@ -14,6 +14,7 @@ class ObservationStatus(str, Enum):
     INVALID_POSE = "INVALID_POSE"
     OUT_OF_ORDER = "OUT_OF_ORDER"
     FUTURE = "FUTURE"
+    INVALID_TIME = "INVALID_TIME"
 
 
 @dataclass(frozen=True)
@@ -46,16 +47,33 @@ def validate_observation(
     observation: Observation,
     expected_target_id: int,
     now_s: float,
-    last_capture_time_s: float,
+    last_capture_time_s: float | None,
     max_age_s: float = 0.2,
     centered_tolerance_m: float = 0.15,
 ) -> ObservationDecision:
     """Classify an observation without I/O or external dependencies."""
-    if max_age_s <= 0 or centered_tolerance_m <= 0:
-        raise ValueError("max_age_s and centered_tolerance_m must be positive")
+    if not _finite_metric(now_s):
+        raise ValueError("now_s must be a finite number")
+    if last_capture_time_s is not None and not _finite_metric(last_capture_time_s):
+        raise ValueError("last_capture_time_s must be a finite number or None")
+    if not _finite_metric(max_age_s) or max_age_s <= 0:
+        raise ValueError("max_age_s must be a finite positive number")
+    if not _finite_metric(centered_tolerance_m) or centered_tolerance_m <= 0:
+        raise ValueError("centered_tolerance_m must be a finite positive number")
 
     def rejected(status: ObservationStatus) -> ObservationDecision:
         return ObservationDecision(status, None)
+
+    capture_time_s = getattr(observation, "capture_time_s", None)
+    received_time_s = getattr(observation, "received_time_s", None)
+    if (
+        not _finite_metric(capture_time_s)
+        or not _finite_metric(received_time_s)
+        or received_time_s < capture_time_s
+    ):
+        return rejected(ObservationStatus.INVALID_TIME)
+    if capture_time_s > now_s or received_time_s > now_s:
+        return rejected(ObservationStatus.FUTURE)
 
     if observation.target_id is None or observation.target_id == "" or observation.target_id != expected_target_id:
         return rejected(ObservationStatus.WRONG_TARGET)
@@ -67,11 +85,9 @@ def validate_observation(
         or not _finite_metric(getattr(observation, "y_error_m", None))
     ):
         return rejected(ObservationStatus.INVALID_POSE)
-    if observation.capture_time_s > now_s:
-        return rejected(ObservationStatus.FUTURE)
-    if observation.capture_time_s <= last_capture_time_s:
+    if last_capture_time_s is not None and capture_time_s <= last_capture_time_s:
         return rejected(ObservationStatus.OUT_OF_ORDER)
-    if now_s - observation.capture_time_s > max_age_s:
+    if now_s - capture_time_s > max_age_s:
         return rejected(ObservationStatus.STALE)
 
     horizontal_error = math.hypot(observation.x_error_m, observation.y_error_m)

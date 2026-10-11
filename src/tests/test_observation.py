@@ -33,7 +33,7 @@ class TestObservationValidation(unittest.TestCase):
                          ["status", "horizontal_error_m"])
         self.assertEqual({member.name for member in ObservationStatus},
                          {"VALID", "CENTERED", "STALE", "WRONG_TARGET",
-                          "INVALID_POSE", "OUT_OF_ORDER", "FUTURE"})
+                          "INVALID_POSE", "OUT_OF_ORDER", "FUTURE", "INVALID_TIME"})
         for member in ObservationStatus:
             self.assertIsInstance(member, str)
             self.assertEqual(member.value, member.name)
@@ -54,7 +54,7 @@ class TestObservationValidation(unittest.TestCase):
         for target in (None, "", 8):
             with self.subTest(target=target):
                 result = self.decide(self.observation(target_id=target, valid_pose=False,
-                                                      capture_time_s=101))
+                                                      capture_time_s=100.0, received_time_s=100.05))
                 self.assertEqual(result, ObservationDecision(ObservationStatus.WRONG_TARGET, None))
 
     def test_invalid_pose_and_measurements(self):
@@ -78,12 +78,13 @@ class TestObservationValidation(unittest.TestCase):
         decimal = self.decide(self.observation(x_error_m=Decimal("0.06")))
         self.assertEqual(decimal.status, ObservationStatus.CENTERED)
 
-    def test_invalid_pose_precedes_future(self):
-        result = self.decide(self.observation(valid_pose=False, capture_time_s=101))
-        self.assertEqual(result.status, ObservationStatus.INVALID_POSE)
+    def test_future_precedes_invalid_pose(self):
+        result = self.decide(self.observation(valid_pose=False, capture_time_s=101,
+                                              received_time_s=101))
+        self.assertEqual(result.status, ObservationStatus.FUTURE)
 
     def test_future_precedes_out_of_order(self):
-        result = self.decide(self.observation(capture_time_s=101.0),
+        result = self.decide(self.observation(capture_time_s=101.0, received_time_s=101.0),
                              last_capture_time_s=102.0)
         self.assertEqual(result, ObservationDecision(ObservationStatus.FUTURE, None))
 
@@ -103,14 +104,16 @@ class TestObservationValidation(unittest.TestCase):
 
     def test_age_boundary_exactly_max_age_accepted(self):
         """Test that an observation exactly max_age_s old is accepted (not STALE)."""
-        result = self.decide(self.observation(capture_time_s=99.75, x_error_m=0.20, y_error_m=0.0),
+        result = self.decide(self.observation(capture_time_s=99.75, received_time_s=99.80,
+                                              x_error_m=0.20, y_error_m=0.0),
                              last_capture_time_s=99.0,
                              now_s=100.0, max_age_s=0.25)
         self.assertEqual(result.status, ObservationStatus.VALID)
 
     def test_age_boundary_older_than_max_age_is_stale(self):
         """Test that an observation older than max_age_s is STALE."""
-        result = self.decide(self.observation(capture_time_s=99.5, x_error_m=0.20, y_error_m=0.0),
+        result = self.decide(self.observation(capture_time_s=99.5, received_time_s=99.55,
+                                              x_error_m=0.20, y_error_m=0.0),
                              last_capture_time_s=99.0,
                              now_s=100.0, max_age_s=0.25)
         self.assertEqual(result.status, ObservationStatus.STALE)
@@ -141,7 +144,7 @@ class TestObservationValidation(unittest.TestCase):
 
     def test_timestamp_later_than_now_is_future(self):
         """Test that capture time later than now_s is FUTURE."""
-        result = self.decide(self.observation(capture_time_s=100.1),
+        result = self.decide(self.observation(capture_time_s=100.1, received_time_s=100.1),
                              last_capture_time_s=99.9)
         self.assertEqual(result, ObservationDecision(ObservationStatus.FUTURE, None))
 
@@ -197,6 +200,47 @@ class TestObservationValidation(unittest.TestCase):
         del values["x_error_m"]
         result = self.decide(SimpleNamespace(**values))
         self.assertEqual(result, ObservationDecision(ObservationStatus.INVALID_POSE, None))
+
+    def test_invalid_capture_or_receive_time_is_rejected(self):
+        for field, value in (
+            ("capture_time_s", None), ("capture_time_s", True),
+            ("capture_time_s", "100"), ("capture_time_s", math.nan),
+            ("capture_time_s", math.inf), ("received_time_s", None),
+            ("received_time_s", False), ("received_time_s", "100"),
+            ("received_time_s", math.nan), ("received_time_s", -math.inf),
+        ):
+            with self.subTest(field=field, value=value):
+                result = self.decide(self.observation(**{field: value}))
+                self.assertEqual(result, ObservationDecision(ObservationStatus.INVALID_TIME, None))
+
+    def test_receive_before_capture_is_invalid_time(self):
+        result = self.decide(self.observation(capture_time_s=100.0, received_time_s=99.99))
+        self.assertEqual(result, ObservationDecision(ObservationStatus.INVALID_TIME, None))
+
+    def test_receive_after_now_is_future(self):
+        result = self.decide(self.observation(capture_time_s=100.0, received_time_s=100.09))
+        self.assertEqual(result, ObservationDecision(ObservationStatus.FUTURE, None))
+
+    def test_invalid_caller_times_and_thresholds_raise_value_error(self):
+        for options in (
+            dict(now_s=True), dict(now_s=math.nan), dict(last_capture_time_s=True),
+            dict(last_capture_time_s=math.inf), dict(max_age_s=True),
+            dict(max_age_s=math.nan), dict(centered_tolerance_m=False),
+            dict(centered_tolerance_m=math.inf),
+        ):
+            with self.subTest(options=options):
+                with self.assertRaises(ValueError):
+                    self.decide(self.observation(), **options)
+
+    def test_first_observation_allows_none_last_capture_time(self):
+        result = self.decide(self.observation(x_error_m=0.20, y_error_m=0.0),
+                             last_capture_time_s=None)
+        self.assertEqual(result.status, ObservationStatus.VALID)
+
+    def test_staleness_uses_capture_time_not_receive_time(self):
+        observation = self.observation(capture_time_s=99.0, received_time_s=100.05)
+        result = self.decide(observation, now_s=100.08, last_capture_time_s=98.0)
+        self.assertEqual(result.status, ObservationStatus.STALE)
 
 
 if __name__ == "__main__":

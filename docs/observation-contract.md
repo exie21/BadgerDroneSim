@@ -13,7 +13,7 @@ is not the final integration message schema.
 | --- | --- |
 | `target_id` | Observed target identity; compared with `expected_target_id`. ID `0` is valid when expected. |
 | `capture_time_s` | Capture timestamp in the caller's clock domain. |
-| `received_time_s` | Receipt timestamp; stored, but **not currently checked** by this validator. |
+| `received_time_s` | Receipt timestamp in the caller's clock domain; must be finite and not earlier than `capture_time_s`. |
 | `x_error_m`, `y_error_m` | Supplied horizontal metric errors in meters. |
 | `valid_pose` | Caller-supplied pose-valid flag; only `True` passes. |
 | `calibration_version` | Nonblank string identifying the caller's calibration. |
@@ -22,29 +22,34 @@ is not the final integration message schema.
 `horizontal_error_m`. The latter is `None` for every rejected status; for
 `VALID` or `CENTERED` it is `hypot(x_error_m, y_error_m)` in meters. `status` is
 an `ObservationStatus` member: `VALID`, `CENTERED`, `STALE`, `WRONG_TARGET`,
-`INVALID_POSE`, `OUT_OF_ORDER`, or `FUTURE`.
+`INVALID_POSE`, `OUT_OF_ORDER`, `FUTURE`, or `INVALID_TIME`.
 
 `validate_observation(observation, expected_target_id, now_s,
 last_capture_time_s, max_age_s=0.2, centered_tolerance_m=0.15)` returns an
 `ObservationDecision`. The caller supplies the expected target, current time,
-and previous accepted capture time. Both thresholds must be positive; a
-non-positive value raises `ValueError` before an observation is classified.
+and previous accepted capture time. `last_capture_time_s` may be `None` for a
+first observation. `now_s`, a non-`None` prior capture time, and both thresholds
+must be finite non-boolean numbers; both thresholds must also be positive.
+Invalid caller arguments raise `ValueError` before an observation is classified.
 
 ## Decision order and boundaries
 
-The first matching rule wins:
+The first matching rule wins after caller arguments are validated:
 
-1. `WRONG_TARGET`: `target_id` is `None`, an empty string, or unequal to
+1. `INVALID_TIME`: `capture_time_s` or `received_time_s` is missing, boolean,
+   nonnumeric, or nonfinite, or receipt is earlier than capture.
+2. `FUTURE`: either finite observation timestamp is later than `now_s`.
+3. `WRONG_TARGET`: `target_id` is `None`, an empty string, or unequal to
    `expected_target_id`.
-2. `INVALID_POSE`: `valid_pose` is not exactly `True`, `calibration_version` is
+4. `INVALID_POSE`: `valid_pose` is not exactly `True`, `calibration_version` is
    not a nonblank string, or either metric error is missing, boolean,
    nonnumeric, or nonfinite.
-3. `FUTURE`: `capture_time_s > now_s`.
-4. `OUT_OF_ORDER`: `capture_time_s <= last_capture_time_s` (duplicates count).
-5. `STALE`: `now_s - capture_time_s > max_age_s`.
-6. `INVALID_POSE`: the computed horizontal error is nonfinite, including
+5. `OUT_OF_ORDER`: a non-first `capture_time_s <= last_capture_time_s`
+   (duplicates count).
+6. `STALE`: `now_s - capture_time_s > max_age_s`.
+7. `INVALID_POSE`: the computed horizontal error is nonfinite, including
    numeric overflow in `hypot`.
-7. Otherwise `CENTERED` when horizontal error is
+8. Otherwise `CENTERED` when horizontal error is
    `<= centered_tolerance_m`; otherwise `VALID`.
 
 An age **equal** to `max_age_s` is accepted, and an error **equal** to
@@ -63,10 +68,11 @@ and `last_capture_time_s=99.90` returns `CENTERED` with horizontal error about
 All supplied timestamps must use one caller-defined clock domain. The caller
 must not subtract or compare timestamps from different domains; the domain is
 not encoded in `Observation`, and this version does not synchronize clocks.
-Age is calculated from **capture**, not receipt, time. The current validator
-does not validate `received_time_s` or the finiteness of timestamp inputs, so
-callers must check those before relying on a decision. It expects a comparable
-`last_capture_time_s`; a first-sample `None` is not supported yet.
+Age is calculated from **capture**, not receipt, time. The validator rejects
+unusable observation timestamps but cannot establish that a caller's chosen
+clock domain represents real-world synchronized time. A first sample uses
+`last_capture_time_s=None`; later callers must retain the prior accepted capture
+time in that same domain.
 
 The caller must provide already-transformed metric `x_error_m` and `y_error_m`
 in one documented frame, verify the calibration behind `calibration_version`,
