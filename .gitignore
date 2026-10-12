@@ -2,3 +2,6 @@
 AGENT_HANDOFF_SCOPE.txt
 .agent-queue/
 .aider*
+__pycache__/
+*.py[cod]
+artifacts/

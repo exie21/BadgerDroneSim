@@ -1,0 +1,7 @@
+.git/
+.agent-queue/
+.aider*
+AGENT_HANDOFF_SCOPE.txt
+__pycache__/
+*.py[cod]
+artifacts/

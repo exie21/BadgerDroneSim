@@ -1,0 +1,74 @@
+name: badger-d0
+
+services:
+  sitl:
+    build:
+      context: ..
+      dockerfile: containers/sitl/Dockerfile
+      args:
+        ARDUPILOT_COMMIT: dbe792162d06cab66c3475fd5556bf7a120f119e
+    init: true
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    user: "1000:1000"
+    environment:
+      HOME: /state
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    volumes:
+      - ../artifacts/d0/sitl:/state
+    networks: [d0]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 5760), 2).close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
+  router:
+    build:
+      context: ..
+      dockerfile: containers/router/Dockerfile
+      args:
+        MAVLINK_ROUTER_COMMIT: 42529d55b665e0a9a29e424e186f514c56c2e5b5
+    init: true
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    user: "1000:1000"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    depends_on:
+      sitl:
+        condition: service_healthy
+    networks: [d0]
+
+  telemetry:
+    build:
+      context: ..
+      dockerfile: containers/telemetry/Dockerfile
+      args:
+        PYMAVLINK_VERSION: 2.4.50
+    init: true
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    user: "1000:1000"
+    environment:
+      SMOKE_BIND_HOST: 0.0.0.0
+      SMOKE_BIND_PORT: "14551"
+      SMOKE_TIMEOUT_S: "30"
+      SMOKE_EVIDENCE_PATH: /state/telemetry-smoke.json
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    volumes:
+      - ../artifacts/d0/telemetry:/state
+    depends_on:
+      router:
+        condition: service_started
+    networks: [d0]
+
+networks:
+  d0:
+    internal: true
