@@ -18,7 +18,9 @@ services:
       - /tmp:rw,noexec,nosuid,size=256m
     volumes:
       - ../artifacts/d0/sitl:/state
-    networks: [d0]
+    networks:
+      d0:
+        ipv4_address: 172.29.0.2
     healthcheck:
       test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 5760), 2).close()"]
       interval: 5s
@@ -67,8 +69,13 @@ services:
     depends_on:
       router:
         condition: service_started
-    networks: [d0]
+    networks:
+      d0:
+        ipv4_address: 172.29.0.10
 
 networks:
   d0:
     internal: true
+    ipam:
+      config:
+        - subnet: 172.29.0.0/24
