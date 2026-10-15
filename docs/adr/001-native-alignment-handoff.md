@@ -32,6 +32,9 @@ For the first SITL alignment experiment:
 For a future metric `LANDING_TARGET` adapter, the exact selected ArduPilot
 firmware must be rechecked. The current documented form uses `MAV_FRAME_BODY_FRD`,
 `position_valid=1`, populated metric `x`, `y`, `z`, and `distance`.
+The required perception-to-target-data boundary is tracked in
+[the precision-target contract](../precision-target-contract.md); the existing
+2-D observation validator is not itself a MAVLink adapter.
 
 ## Consequences
 
