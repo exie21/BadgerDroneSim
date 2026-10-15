@@ -1,0 +1,87 @@
+name: badger-d1
+
+services:
+  sitl:
+    build:
+      context: ..
+      dockerfile: containers/sitl/Dockerfile
+      args:
+        ARDUPILOT_COMMIT: dbe792162d06cab66c3475fd5556bf7a120f119e
+    init: true
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    user: "1000:1000"
+    environment:
+      HOME: /state
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    volumes:
+      - ../artifacts/d1/sitl:/state
+    networks:
+      d1:
+        ipv4_address: 172.30.0.2
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 5760), 2).close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
+  router:
+    build:
+      context: ..
+      dockerfile: containers/router/Dockerfile
+      args:
+        MAVLINK_ROUTER_COMMIT: 42529d55b665e0a9a29e424e186f514c56c2e5b5
+        ROUTER_CONFIG: containers/router/d1.conf
+    init: true
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    user: "1000:1000"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    depends_on:
+      sitl:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5761:5761"
+    networks: [d1]
+
+  precision-target:
+    build:
+      context: ..
+      dockerfile: containers/precision-target/Dockerfile
+      args:
+        PYMAVLINK_VERSION: 2.4.50
+    init: true
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    user: "1000:1000"
+    environment:
+      D1_TARGET_NORTH_M: "${D1_TARGET_NORTH_M:-5.0}"
+      D1_TARGET_EAST_M: "${D1_TARGET_EAST_M:-0.0}"
+      D1_TARGET_DOWN_M: "${D1_TARGET_DOWN_M:-0.0}"
+      D1_RATE_HZ: "5.0"
+      D1_STATE_MAX_AGE_S: "0.5"
+      D1_TELEMETRY_BIND_HOST: 0.0.0.0
+      D1_TELEMETRY_BIND_PORT: "14551"
+      D1_ROUTER_HOST: router
+      D1_ROUTER_PORT: "14552"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    depends_on:
+      router:
+        condition: service_started
+    networks:
+      d1:
+        ipv4_address: 172.30.0.10
+
+networks:
+  d1:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
