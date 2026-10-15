@@ -6,6 +6,11 @@ provides target data and ArduPilot's own Precision Loiter controller performs
 the lateral hold. Mission Planner and the operator remain responsible for the
 mission, modes, arming, takeoff, altitude, and landing.
 
+**Execution status:** the profile and its host tests are defined, but D1 has
+not yet been executed end-to-end in this checkout. Do not claim a successful
+Precision Loiter hold until the evidence below is collected from a running
+SITL profile.
+
 It is deliberately separate from D0. D0 remains a read-only telemetry check;
 D1 adds a loopback-only GCS connection and a single restricted target-data
 ingress. Neither profile represents a Jetson image, a camera, a real aircraft,
@@ -60,20 +65,61 @@ provide the missing body-frame transform, range/height, target identity,
 calibration evidence, and source-health policy before it can replace D1's
 synthetic data.
 
-## Run in SITL only
+## Docker preflight
 
 Docker Desktop must be running with the WSL integration that contains this
 repository enabled. From the repository root in WSL:
 
 ```sh
-docker compose -f compose/d1.compose.yaml up --build
+docker info
+docker compose -f compose/d1.compose.yaml config --quiet
 ```
 
-Wait until the `precision-target` logs show a first `published
-LANDING_TARGET` line and the `target-evidence` service reports that it verified
-three messages. Its JSON evidence must have `"status": "ok"`. In Mission
-Planner, connect with connection type **TCP** to `127.0.0.1:5761`. Do not use
-this profile against a physical flight controller.
+`docker info` must print a server version. If it reports an inaccessible
+`docker_engine` pipe, do not continue: start Docker Desktop, enable the WSL
+distribution that contains this repository, then open a new WSL terminal and
+repeat the preflight. A successful Compose config parse alone does not prove
+that an engine is available.
+
+## Stage 1: packet-path evidence
+
+This bounded run proves SITL-to-source telemetry, synthetic target generation,
+router forwarding, and the receive-only packet check. It does not involve
+Mission Planner or a mode change:
+
+```sh
+docker compose -f compose/d1.compose.yaml up --build --abort-on-container-exit --exit-code-from target-evidence
+```
+
+Success requires `target-evidence` to exit `0`, log that it verified three
+metric target messages, and write
+`artifacts/d1/evidence/landing-target-evidence.json` with `"status": "ok"`
+and `"evidence_status": "VALID"`. Review the source logs as well: they must
+show a `published LANDING_TARGET` line. Preserve the artifact and relevant
+Compose logs as local evidence; artifacts are intentionally ignored by Git.
+
+Stop and inspect failures before retrying:
+
+```sh
+docker compose -f compose/d1.compose.yaml logs
+docker compose -f compose/d1.compose.yaml down --remove-orphans
+```
+
+Do not work around a failure by adding a movement command, loosening the router
+message filter, host networking, hardware devices, or a real flight controller.
+
+## Stage 2: operator-controlled Precision Loiter
+
+After Stage 1 passes, start the long-running SIM-only profile:
+
+```sh
+docker compose -f compose/d1.compose.yaml up --build -d
+docker compose -f compose/d1.compose.yaml logs -f precision-target target-evidence
+```
+
+Wait until the source publishes a target and the evidence service has succeeded.
+In Mission Planner, connect with connection type **TCP** to `127.0.0.1:5761`.
+Do not use this profile against a physical flight controller.
 
 Before flight, in SITL only:
 
@@ -90,6 +136,12 @@ Before flight, in SITL only:
 7. The operator disables Precision Loiter or selects the next mode to exit.
    Do not use D1 to test automatic mission resumption, descent, landing, or
    payload actions.
+
+Record the following for every Stage 2 attempt: firmware/Compose revision,
+`PLND_*` settings, target coordinates, Mission Planner connection, selected
+mode and auxiliary-switch transition, evidence JSON, source/router/SITL logs,
+and observed vehicle response. An accepted parameter write or GCS action is
+not evidence of a mode transition or target-relative hold.
 
 To move the synthetic fixed point before starting the profile, override one or
 more Compose environment values, for example:
@@ -115,11 +167,19 @@ docker compose -f compose/d1.compose.yaml down --remove-orphans
 
 ## Required evidence and stop conditions
 
-Record the selected SITL firmware, Precision Landing parameters, target
-coordinates, mode/switch transitions, target-source logs, and the operator's
-observed hold behavior. A useful first success is: in Loiter with function 39
-enabled, changing the simulated ground target causes the vehicle to hold over
-that target without any companion movement command.
+The required D1 result is a four-part checklist:
+
+1. **Packet path:** the evidence artifact is `ok` and all sampled target
+   packets are metric body-FRD messages.
+2. **GCS isolation:** Mission Planner reaches the loopback endpoint and retains
+   ordinary operator control; the companion source remains limited to message
+   149.
+3. **Native hold:** in Loiter with function 39 enabled, changing the simulated
+   ground target causes target-relative lateral hold at the current altitude,
+   without any companion movement command.
+4. **Loss and exit:** a stopped target stream and an explicit operator exit are
+   observed and recorded. Neither must trigger companion-controlled recovery,
+   mission resumption, descent, or payload action.
 
 Stop the experiment if target messages stop, target state becomes stale,
 router connectivity is lost, the observed motion is unexpected, or operator
