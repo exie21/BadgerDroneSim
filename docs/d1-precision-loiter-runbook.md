@@ -24,6 +24,8 @@ Mission Planner (operator, host only)
        | Synthetic fixed-ground-target source
        | local NED target + SITL LOCAL_POSITION_NED/ATTITUDE
        +---- UDP LANDING_TARGET only (MAVLink message 149)
+            |
+            +---- UDP receive-only target-evidence check
 ```
 
 The router publishes the TCP server only as `127.0.0.1:5761`; it is not a LAN
@@ -31,6 +33,9 @@ or hardware interface. The synthetic source has a separate inbound router
 endpoint with `AllowMsgIdIn = 149`, so the router drops every source message
 except `LANDING_TARGET`. Its code has no API for velocity, position, yaw,
 arming, takeoff, land, mode, mission, parameter, or payload commands.
+The separate `target-evidence` service receives routed traffic but does not send
+anything; it exits successfully only after validating three metric target
+messages and writes `artifacts/d1/evidence/landing-target-evidence.json`.
 
 Mission Planner is intentionally not restricted by that target-source filter:
 the operator uses it as the ordinary GCS to configure SITL and choose modes.
@@ -65,9 +70,10 @@ docker compose -f compose/d1.compose.yaml up --build
 ```
 
 Wait until the `precision-target` logs show a first `published
-LANDING_TARGET` line. In Mission Planner, connect with connection type **TCP**
-to `127.0.0.1:5761`. Do not use this profile against a physical flight
-controller.
+LANDING_TARGET` line and the `target-evidence` service reports that it verified
+three messages. Its JSON evidence must have `"status": "ok"`. In Mission
+Planner, connect with connection type **TCP** to `127.0.0.1:5761`. Do not use
+this profile against a physical flight controller.
 
 Before flight, in SITL only:
 
@@ -94,6 +100,12 @@ D1_TARGET_NORTH_M=3.0 D1_TARGET_EAST_M=-1.0 docker compose -f compose/d1.compose
 
 Do not alter these values while the vehicle is flying until target-loss and
 transient behavior have been explicitly tested in SITL.
+
+To inject a controlled simulated target loss, start D1 with a positive stream
+duration such as `D1_STREAM_DURATION_S=10`. The target source will then exit
+normally after ten seconds without sending a replacement, zero, or cached
+target. Observe the native Precision Loiter response and operator exit in SITL;
+do not assume it will be appropriate for an eventual payload operation.
 
 Stop and clean up after each run:
 

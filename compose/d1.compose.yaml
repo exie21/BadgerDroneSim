@@ -70,6 +70,9 @@ services:
       D1_TELEMETRY_BIND_PORT: "14551"
       D1_ROUTER_HOST: router
       D1_ROUTER_PORT: "14552"
+      # Zero means stream until the operator stops the profile. A positive
+      # value is a SIM-only target-loss injection after that many seconds.
+      D1_STREAM_DURATION_S: "${D1_STREAM_DURATION_S:-0.0}"
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
     depends_on:
@@ -78,6 +81,35 @@ services:
     networks:
       d1:
         ipv4_address: 172.30.0.10
+
+  target-evidence:
+    build:
+      context: ..
+      dockerfile: containers/precision-target/Dockerfile
+      args:
+        PYMAVLINK_VERSION: 2.4.50
+    entrypoint: ["python3", "-m", "badger_precision_target.evidence"]
+    init: true
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    user: "1000:1000"
+    environment:
+      D1_EVIDENCE_BIND_HOST: 0.0.0.0
+      D1_EVIDENCE_BIND_PORT: "14553"
+      D1_EVIDENCE_TIMEOUT_S: "30"
+      D1_EVIDENCE_MIN_VALID_SAMPLES: "3"
+      D1_EVIDENCE_PATH: /state/landing-target-evidence.json
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    volumes:
+      - ../artifacts/d1/evidence:/state
+    depends_on:
+      router:
+        condition: service_started
+    networks:
+      d1:
+        ipv4_address: 172.30.0.11
 
 networks:
   d1:
