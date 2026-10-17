@@ -19,6 +19,8 @@ WORKDIR /opt/ardupilot
 RUN ./waf configure --board sitl \
     && ./waf copter
 
+COPY containers/sitl/d1-telemetry.param /opt/badger/d1-telemetry.param
+
 USER 1000:1000
 WORKDIR /state
 ENTRYPOINT ["python3", "/opt/ardupilot/Tools/autotest/sim_vehicle.py"]

@@ -101,6 +101,8 @@ def _evidence_payload(evidence: LandingTargetEvidence) -> dict[str, object]:
 
 def main() -> int:
     host, port, timeout_s, minimum_samples, path = _configuration()
+    # Decode metric LANDING_TARGET extension fields from the MAVLink 2 stream.
+    os.environ.setdefault("MAVLINK20", "1")
     from pymavlink import mavutil
 
     connection = mavutil.mavlink_connection(f"udpin:{host}:{port}")

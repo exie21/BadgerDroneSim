@@ -6,10 +6,11 @@ provides target data and ArduPilot's own Precision Loiter controller performs
 the lateral hold. Mission Planner and the operator remain responsible for the
 mission, modes, arming, takeoff, altitude, and landing.
 
-**Execution status:** the profile and its host tests are defined, but D1 has
-not yet been executed end-to-end in this checkout. Do not claim a successful
-Precision Loiter hold until the evidence below is collected from a running
-SITL profile.
+**Execution status:** Stage 1 packet-path evidence has passed locally: the
+source published a plausible metric target and the receive-only service
+validated three routed packets. Stage 2 has not been run. Do not claim a
+successful Precision Loiter hold until the operator evidence below is
+collected from a running SITL profile.
 
 It is deliberately separate from D0. D0 remains a read-only telemetry check;
 D1 adds a loopback-only GCS connection and a single restricted target-data
@@ -24,10 +25,10 @@ Mission Planner (operator, host only)
             v
   MAVLink Router <---- TCP ----> ArduCopter SITL
        ^  |                         native Precision Loiter controller
-       |  | UDP telemetry
+       |  | TCP telemetry
        |  v
-       | Synthetic fixed-ground-target source
-       | local NED target + SITL LOCAL_POSITION_NED/ATTITUDE
+       | Synthetic fixed-ground-target source (router TCP client)
+       | local NED target + SITL GLOBAL_POSITION_INT/ATTITUDE
        +---- UDP LANDING_TARGET only (MAVLink message 149)
             |
             +---- UDP receive-only target-evidence check
@@ -49,21 +50,25 @@ This does not grant any authority to the companion source.
 ## What the synthetic target means
 
 The D1 source sets a fixed simulated pickup point in ArduPilot local NED
-coordinates (default: north 5 m, east 0 m, down 0 m). It receives only
-`LOCAL_POSITION_NED` and `ATTITUDE` from SITL, recomputes the target's
-vehicle-relative body-FRD vector, and emits a metric `LANDING_TARGET` at 5 Hz.
+coordinates (default: north 5 m, east 0 m, down 0 m). It receives
+`GLOBAL_POSITION_INT` and `ATTITUDE` from SITL, derives vehicle local NED from
+the configured SITL home and relative altitude, then recomputes the target's
+vehicle-relative body-FRD vector and emits a metric `LANDING_TARGET` at 5 Hz.
 It publishes nothing until both state messages are fresh (default maximum age:
 0.5 s). `time_usec` is source boot time and does not need synchronization with
-the flight controller.
+the flight controller. This GPS-to-local conversion is D1 simulation-only;
+real perception must satisfy the precision-target contract instead.
 
 Each target message uses the documented metric form: `MAV_FRAME_BODY_FRD` (12),
 `position_valid=1`, `x` forward, `y` right, `z` down, and Euclidean `distance`.
-The source's target number is 0. This tests a stationary-world target; it is
-not a visual detection, an AprilTag integration, a calibrated camera frame,
-or a bridge from the existing `Observation` contract. That future bridge must
-provide the missing body-frame transform, range/height, target identity,
-calibration evidence, and source-health policy before it can replace D1's
-synthetic data.
+The source uses router TCP to read SITL's MAVLink 1 telemetry and a separate
+MAVLink 2 encoder for the metric target packet, because these fields are
+MAVLink 2 extensions. The source's target number is 0. This tests a
+stationary-world target; it is not a visual detection, an AprilTag integration,
+a calibrated camera frame, or a bridge from the existing `Observation`
+contract. That future bridge must provide the missing body-frame transform,
+range/height, target identity, calibration evidence, and source-health policy
+before it can replace D1's synthetic data.
 
 ## Docker preflight
 
@@ -90,6 +95,18 @@ Mission Planner or a mode change:
 ```sh
 docker compose -f compose/d1.compose.yaml up --build --abort-on-container-exit --exit-code-from target-evidence
 ```
+
+The D1 SITL overlay configures its own first-link stream rates
+(`MAV1_POSITION=10` and `MAV1_EXTRA1=10`) so it emits
+`GLOBAL_POSITION_INT` and `ATTITUDE` without a companion request message.
+The source emits only metric `LANDING_TARGET`; it has no movement or
+mission-control output. During SITL startup it rejects the all-zero GPS state
+until the reported position is within 1 km of the configured simulated home,
+so it cannot publish a target from an uninitialized world origin.
+
+D1 starts SITL with `--wipe`, which removes only its ignored local simulation
+EEPROM state before applying this overlay. This makes Stage 1 reproducible, but
+also means Mission Planner parameter changes do not survive a D1 restart.
 
 Success requires `target-evidence` to exit `0`, log that it verified three
 metric target messages, and write

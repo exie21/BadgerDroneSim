@@ -13,7 +13,10 @@ from src.badger_precision_target.landing_target import (
     send_metric_landing_target,
     target_relative_to_body_frd,
 )
-from src.badger_precision_target.synthetic import VehicleStateCache
+from src.badger_precision_target.synthetic import (
+    VehicleStateCache,
+    global_position_int_to_local_ned,
+)
 
 
 @dataclass
@@ -109,6 +112,36 @@ class TestPrecisionTarget(unittest.TestCase):
         self.assertFalse(cache.accept(unrelated, received_s=10.0))
         self.assertFalse(cache.accept(invalid_position, received_s=10.0))
         self.assertIsNone(cache.current(now_s=10.0, max_age_s=0.5))
+
+    def test_global_position_int_uses_the_configured_sitl_home(self) -> None:
+        point = global_position_int_to_local_ned(
+            latitude_e7=-353632610,
+            longitude_e7=1491652300,
+            relative_altitude_mm=5_000,
+            home_lat_deg=-35.363261,
+            home_lon_deg=149.165230,
+        )
+
+        self.assertAlmostEqual(point.north_m, 0.0, places=9)
+        self.assertAlmostEqual(point.east_m, 0.0, places=9)
+        self.assertEqual(point.down_m, -5.0)
+
+    def test_cache_accepts_global_position_int_as_simulation_position(self) -> None:
+        cache = VehicleStateCache()
+        position = Message("GLOBAL_POSITION_INT")
+        position.lat, position.lon, position.relative_alt = -353632610, 1491652300, 2_000
+
+        self.assertTrue(cache.accept(position, received_s=10.0))
+        self.assertIsNone(cache.current(now_s=10.0, max_age_s=0.5))
+        self.assertEqual(cache.vehicle_ned, NedPoint(0.0, 0.0, -2.0))
+
+    def test_cache_rejects_sitl_gps_before_its_configured_home_is_ready(self) -> None:
+        cache = VehicleStateCache()
+        position = Message("GLOBAL_POSITION_INT")
+        position.lat, position.lon, position.relative_alt = 0, 0, 0
+
+        self.assertFalse(cache.accept(position, received_s=10.0))
+        self.assertIsNone(cache.vehicle_ned)
 
 
 if __name__ == "__main__":

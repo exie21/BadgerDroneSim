@@ -27,6 +27,17 @@ services:
       timeout: 3s
       retries: 12
       start_period: 15s
+    command:
+      - --vehicle
+      - ArduCopter
+      - --no-mavproxy
+      - --no-rebuild
+      - --speedup
+      - "1"
+      # D1 must start with its telemetry overlay, rather than values persisted
+      # by an earlier local SITL run in the ignored /state eeprom.bin.
+      - --wipe
+      - --add-param-file=/opt/badger/d1-telemetry.param
 
   router:
     build:
@@ -64,10 +75,14 @@ services:
       D1_TARGET_NORTH_M: "${D1_TARGET_NORTH_M:-5.0}"
       D1_TARGET_EAST_M: "${D1_TARGET_EAST_M:-0.0}"
       D1_TARGET_DOWN_M: "${D1_TARGET_DOWN_M:-0.0}"
+      # Default ArduPilot SITL home, used only by the D1 simulation conversion
+      # from GLOBAL_POSITION_INT to the fixed scenario's local NED frame.
+      D1_HOME_LAT_DEG: "${D1_HOME_LAT_DEG:--35.363261}"
+      D1_HOME_LON_DEG: "${D1_HOME_LON_DEG:-149.165230}"
       D1_RATE_HZ: "5.0"
       D1_STATE_MAX_AGE_S: "0.5"
-      D1_TELEMETRY_BIND_HOST: 0.0.0.0
-      D1_TELEMETRY_BIND_PORT: "14551"
+      D1_TELEMETRY_HOST: router
+      D1_TELEMETRY_PORT: "5761"
       D1_ROUTER_HOST: router
       D1_ROUTER_PORT: "14552"
       # Zero means stream until the operator stops the profile. A positive
@@ -78,9 +93,7 @@ services:
     depends_on:
       router:
         condition: service_started
-    networks:
-      d1:
-        ipv4_address: 172.30.0.10
+    networks: [d1]
 
   target-evidence:
     build:
@@ -100,6 +113,7 @@ services:
       D1_EVIDENCE_TIMEOUT_S: "30"
       D1_EVIDENCE_MIN_VALID_SAMPLES: "3"
       D1_EVIDENCE_PATH: /state/landing-target-evidence.json
+      MAVLINK20: "1"
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
     volumes:

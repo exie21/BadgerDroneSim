@@ -1,0 +1,5 @@
+# D1 synthetic target needs passive FC telemetry. MAV1 is the first MAVLink
+# link used by this SITL TCP endpoint. These rates emit position and attitude
+# without a companion request message.
+MAV1_POSITION,10
+MAV1_EXTRA1,10
